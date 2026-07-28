@@ -1,0 +1,20 @@
+description: Ultralytics best model trained on coco_pipe.yaml
+author: Ultralytics
+date: '2026-07-28T22:09:04.245876+07:00'
+version: 8.4.108
+license: AGPL-3.0 License (https://ultralytics.com/license)
+docs: https://docs.ultralytics.com
+stride: 32
+task: detect
+head: Detect
+batch: 1
+imgsz:
+- 640
+- 640
+names:
+  0: pipe
+args:
+  batch: 1
+  quantize: null
+channels: 3
+end2end: false
