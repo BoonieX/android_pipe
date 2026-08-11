@@ -14,8 +14,10 @@ import androidx.room.RoomDatabase
 import androidx.room.TypeConverter
 import androidx.room.TypeConverters
 import com.booniex.pipes.data.BundleSide
+import com.booniex.pipes.data.NormPoint
 import com.booniex.pipes.data.PipeBox
 import com.booniex.pipes.data.ScanSession
+import com.booniex.pipes.data.SelectionArea
 import com.booniex.pipes.data.SideScan
 import kotlinx.coroutines.flow.Flow
 import org.json.JSONArray
@@ -44,6 +46,19 @@ class Converters {
                 put("side", s.side.name)
                 put("photoPath", s.photoPath)
                 put("count", s.count)
+                s.selection?.let { sel ->
+                    put("selection", JSONObject().apply {
+                        put("count", sel.count)
+                        put("polygon", JSONArray().also { pa ->
+                            sel.polygon.forEach { p ->
+                                pa.put(JSONObject().apply {
+                                    put("x", p.x.toDouble())
+                                    put("y", p.y.toDouble())
+                                })
+                            }
+                        })
+                    })
+                }
                 put("boxes", JSONArray().also { ba ->
                     s.boxes.forEach { b ->
                         ba.put(JSONObject().apply {
@@ -81,12 +96,26 @@ class Converters {
                         )
                     }
                 }
+                val selection = if (s.has("selection") && !s.isNull("selection")) {
+                    val sel = s.getJSONObject("selection")
+                    val polyArr = sel.getJSONArray("polygon")
+                    SelectionArea(
+                        count = sel.getInt("count"),
+                        polygon = buildList {
+                            for (k in 0 until polyArr.length()) {
+                                val p = polyArr.getJSONObject(k)
+                                add(NormPoint(p.getDouble("x").toFloat(), p.getDouble("y").toFloat()))
+                            }
+                        },
+                    )
+                } else null
                 add(
                     SideScan(
                         side = BundleSide.valueOf(s.getString("side")),
                         photoPath = s.getString("photoPath"),
                         count = s.getInt("count"),
                         boxes = boxes,
+                        selection = selection,
                     )
                 )
             }

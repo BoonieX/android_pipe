@@ -9,6 +9,8 @@ object YoloNative {
     }
 
     external fun nativeInit(assetManager: AssetManager): Boolean
-    external fun nativeDetect(bitmap: Bitmap): FloatArray?
+
+    /** [enhance] = terapkan preprocessing adaptif (gamma/autocontrast) sebelum inferensi. */
+    external fun nativeDetect(bitmap: Bitmap, enhance: Boolean): FloatArray?
     external fun nativeRelease()
 }

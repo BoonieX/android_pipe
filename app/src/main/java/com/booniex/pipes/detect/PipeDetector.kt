@@ -7,6 +7,9 @@ import kotlin.random.Random
 
 interface PipeDetector {
     fun detect(bitmap: Bitmap): List<PipeBox>
+
+    /** [enhance] = preprocessing adaptif (gamma/autocontrast) untuk input model (F-21). */
+    fun detect(bitmap: Bitmap, enhance: Boolean): List<PipeBox> = detect(bitmap)
 }
 
 /**

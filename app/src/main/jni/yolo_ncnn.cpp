@@ -66,6 +66,56 @@ static bool load_from_assets(AAssetManager* mgr) {
     return true;
 }
 
+// --- Preprocessing adaptif (F-21): gamma + autocontrast hanya jika enhance=true ---
+// out = (in/255)^gamma * 255, dengan gamma dipilih dari mean luma.
+static float pick_gamma(float mean_luma) {
+    if (mean_luma < 60.f) return 0.7f;   // gelap -> mencerahkan
+    if (mean_luma > 190.f) return 1.25f; // terang -> melembutkan highlight
+    return 1.0f;                          // normal
+}
+
+// Terapkan gamma + autocontrast pada buffer RGB in-place.
+static void enhance_rgb(unsigned char* rgb, int w, int h) {
+    long sum = 0;
+    const int total = w * h;
+    for (int i = 0; i < total; i++) {
+        sum += rgb[i * 3] + rgb[i * 3 + 1] + rgb[i * 3 + 2];
+    }
+    const float mean = sum / (float)(total * 3);
+    if (mean < 5.f || mean > 250.f) return; // tepi: biarkan, tidak berguna diproses
+
+    const float gamma = pick_gamma(mean);
+    const float inv = 1.f / gamma;
+    unsigned char lut[256];
+    for (int v = 0; v < 256; v++) {
+        lut[v] = (unsigned char)(255.f * powf(v / 255.f, inv) + 0.5f);
+    }
+    // autocontrast ringan: stretch 5%..95% histogram ke 0..255
+    int hist[256] = {0};
+    for (int i = 0; i < total; i++) {
+        hist[rgb[i * 3]]++;
+        hist[rgb[i * 3 + 1]]++;
+        hist[rgb[i * 3 + 2]]++;
+    }
+    int lo = 0, hi = 255, acc = 0;
+    const int n = total * 3;
+    const int low_target = (int)(n * 0.01f);
+    while (lo < 255 && acc < low_target) { acc += hist[lo]; lo++; }
+    acc = 0;
+    const int high_target = (int)(n * 0.99f);
+    while (hi > 0 && acc < high_target) { acc += hist[hi]; hi--; }
+    if (hi - lo > 10) {
+        for (int v = 0; v < 256; v++) {
+            float stretched = (v - lo) * 255.f / (float)(hi - lo);
+            stretched = stretched < 0.f ? 0.f : (stretched > 255.f ? 255.f : stretched);
+            lut[v] = (unsigned char)(255.f * powf(stretched / 255.f, inv) + 0.5f);
+        }
+    }
+    for (int i = 0; i < total * 3; i++) {
+        rgb[i] = lut[rgb[i]];
+    }
+}
+
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_booniex_pipes_detect_YoloNative_nativeInit(JNIEnv* env, jclass, jobject assetManager) {
     AAssetManager* mgr = AAssetManager_fromJava(env, assetManager);
@@ -74,7 +124,7 @@ Java_com_booniex_pipes_detect_YoloNative_nativeInit(JNIEnv* env, jclass, jobject
 }
 
 extern "C" JNIEXPORT jfloatArray JNICALL
-Java_com_booniex_pipes_detect_YoloNative_nativeDetect(JNIEnv* env, jclass, jobject bitmap) {
+Java_com_booniex_pipes_detect_YoloNative_nativeDetect(JNIEnv* env, jclass, jobject bitmap, jboolean enhance) {
     if (!g_loaded) {
         LOGE("not loaded");
         return nullptr;
@@ -93,6 +143,20 @@ Java_com_booniex_pipes_detect_YoloNative_nativeDetect(JNIEnv* env, jclass, jobje
     const int src_w = (int)info.width;
     const int src_h = (int)info.height;
 
+    // Konversi RGBA -> RGB sekali lewat (jangan gandakan alokasi bila tanpa enhance)
+    std::vector<unsigned char> rgb;
+    if (enhance) {
+        rgb.resize((size_t)src_w * src_h * 3);
+        const unsigned char* rgba = (const unsigned char*)pixels;
+        for (int i = 0; i < src_w * src_h; i++) {
+            rgb[i * 3 + 0] = rgba[i * 4 + 0];
+            rgb[i * 3 + 1] = rgba[i * 4 + 1];
+            rgb[i * 3 + 2] = rgba[i * 4 + 2];
+        }
+        AndroidBitmap_unlockPixels(env, bitmap);
+        enhance_rgb(rgb.data(), src_w, src_h);
+    }
+
     // letterbox to 640
     float scale = std::min((float)INPUT / src_w, (float)INPUT / src_h);
     int new_w = (int)(src_w * scale);
@@ -100,13 +164,17 @@ Java_com_booniex_pipes_detect_YoloNative_nativeDetect(JNIEnv* env, jclass, jobje
     int pad_x = (INPUT - new_w) / 2;
     int pad_y = (INPUT - new_h) / 2;
 
-    ncnn::Mat in = ncnn::Mat::from_pixels_resize(
-        (const unsigned char*)pixels,
-        ncnn::Mat::PIXEL_RGBA2RGB,
-        src_w, src_h,
-        new_w, new_h
-    );
-    AndroidBitmap_unlockPixels(env, bitmap);
+    ncnn::Mat in;
+    if (enhance) {
+        in = ncnn::Mat::from_pixels_resize(
+            rgb.data(), ncnn::Mat::PIXEL_RGB, src_w, src_h, new_w, new_h
+        );
+    } else {
+        in = ncnn::Mat::from_pixels_resize(
+            (const unsigned char*)pixels, ncnn::Mat::PIXEL_RGBA2RGB, src_w, src_h, new_w, new_h
+        );
+        AndroidBitmap_unlockPixels(env, bitmap);
+    }
 
     ncnn::Mat in_pad;
     ncnn::copy_make_border(in, in_pad, pad_y, INPUT - new_h - pad_y, pad_x, INPUT - new_w - pad_x,

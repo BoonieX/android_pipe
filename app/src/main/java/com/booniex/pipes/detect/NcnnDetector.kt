@@ -17,12 +17,14 @@ class NcnnDetector(context: Context) : PipeDetector {
         if (!ready) error("NCNN model failed to load (nativeInit=false or .so missing)")
     }
 
-    override fun detect(bitmap: Bitmap): List<PipeBox> {
+    override fun detect(bitmap: Bitmap): List<PipeBox> = detect(bitmap, enhance = false)
+
+    override fun detect(bitmap: Bitmap, enhance: Boolean): List<PipeBox> {
         val rgba = if (bitmap.config == Bitmap.Config.ARGB_8888) bitmap
         else bitmap.copy(Bitmap.Config.ARGB_8888, false)
             ?: error("Cannot convert bitmap to ARGB_8888")
 
-        val raw = YoloNative.nativeDetect(rgba) ?: return emptyList()
+        val raw = YoloNative.nativeDetect(rgba, enhance) ?: return emptyList()
         if (raw.isEmpty()) return emptyList()
         val n = raw[0].toInt().coerceAtLeast(0)
         return buildList(n) {

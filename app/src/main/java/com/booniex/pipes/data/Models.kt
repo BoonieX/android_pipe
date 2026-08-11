@@ -18,11 +18,21 @@ data class PipeBox(
     val conf: Float = 1f,
 )
 
+/** Titik normalized [0,1] relatif terhadap foto (untuk polygon seleksi). */
+data class NormPoint(val x: Float, val y: Float)
+
+/** Area seleksi lasso/polygon pada satu sisi + jumlah pipa (centroid) di dalamnya. */
+data class SelectionArea(
+    val polygon: List<NormPoint>,
+    val count: Int,
+)
+
 data class SideScan(
     val side: BundleSide,
     val photoPath: String,
     val count: Int,
     val boxes: List<PipeBox>,
+    val selection: SelectionArea? = null,
 )
 
 data class ScanSession(
@@ -39,6 +49,29 @@ data class ScanSession(
 fun aggregateMax(sides: List<SideScan>): Int =
     sides.maxOfOrNull { it.count } ?: 0
 
+private fun selectionToJson(sel: SelectionArea): JSONObject = JSONObject().apply {
+    put("count", sel.count)
+    put("polygon", JSONArray().also { pa ->
+        sel.polygon.forEach { p ->
+            pa.put(JSONObject().apply {
+                put("x", p.x.toDouble())
+                put("y", p.y.toDouble())
+            })
+        }
+    })
+}
+
+private fun selectionFromJson(o: JSONObject): SelectionArea {
+    val polyArr = o.getJSONArray("polygon")
+    val polygon = buildList {
+        for (i in 0 until polyArr.length()) {
+            val p = polyArr.getJSONObject(i)
+            add(NormPoint(p.getDouble("x").toFloat(), p.getDouble("y").toFloat()))
+        }
+    }
+    return SelectionArea(polygon = polygon, count = o.getInt("count"))
+}
+
 fun ScanSession.toJson(): JSONObject = JSONObject().apply {
     put("id", id)
     put("timestampMs", timestampMs)
@@ -51,6 +84,7 @@ fun ScanSession.toJson(): JSONObject = JSONObject().apply {
                 put("side", s.side.name)
                 put("photoPath", s.photoPath)
                 put("count", s.count)
+                s.selection?.let { put("selection", selectionToJson(it)) }
                 put("boxes", JSONArray().also { ba ->
                     s.boxes.forEach { b ->
                         ba.put(JSONObject().apply {
@@ -87,12 +121,16 @@ fun scanSessionFromJson(o: JSONObject): ScanSession {
                     )
                 }
             }
+            val selection = if (s.has("selection") && !s.isNull("selection")) {
+                selectionFromJson(s.getJSONObject("selection"))
+            } else null
             add(
                 SideScan(
                     side = BundleSide.valueOf(s.getString("side")),
                     photoPath = s.getString("photoPath"),
                     count = s.getInt("count"),
                     boxes = boxes,
+                    selection = selection,
                 )
             )
         }
